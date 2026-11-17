@@ -37,7 +37,8 @@ const chess18Positions = [
 ];
 const classicPosition = "RNBQKBNR";
 const startingPositionSelect = getElement<HTMLSelectElement>("starting-position");
-const game = new Chess(createStartingFen(selectStartingPosition()));
+let startingFen = createStartingFen(selectStartingPosition());
+const game = new Chess(startingFen);
 const boardElement = getElement<HTMLDivElement>("board");
 const turnIndicator = getElement<HTMLSpanElement>("turn-indicator");
 const turnLabel = getElement<HTMLSpanElement>("turn-label");
@@ -88,7 +89,7 @@ function positionKey(fen: string): string {
 
 function currentPositionOccurrences(): number {
   const currentPosition = positionKey(game.fen());
-  const replay = new Chess();
+  const replay = new Chess(startingFen);
   let occurrences = positionKey(replay.fen()) === currentPosition ? 1 : 0;
 
   for (const move of game.history({ verbose: true })) {
@@ -274,14 +275,15 @@ function handleSquareClick(square: Square): void {
 function makeMove(from: Square, to: Square, promotion?: PromotionChoice): void {
   try {
     game.move({ from, to, promotion });
-    selectedSquare = null;
-    legalMoves = [];
-    render();
   } catch {
     selectedSquare = null;
     legalMoves = [];
     render();
+    return;
   }
+  selectedSquare = null;
+  legalMoves = [];
+  render();
 }
 
 function openPromotionDialog(from: Square, to: Square, color: Color): void {
@@ -338,7 +340,8 @@ agreeDrawButton.addEventListener("click", () => {
 
 newGameButton.addEventListener("click", () => {
   if (game.history().length > 0 && !window.confirm("Start a new game? The current game will be lost.")) return;
-  game.load(createStartingFen(selectStartingPosition()));
+  startingFen = createStartingFen(selectStartingPosition());
+  game.load(startingFen);
   agreedDraw = false;
   claimedDraw = null;
   selectedSquare = null;
