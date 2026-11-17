@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f2f4ed" />
+    <meta name="description" content="A two-player game of classic chess." />
+    <title>Chess18 | Classic Chess</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "chess.js": "/vendor/chess.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <a class="wordmark" href="/" aria-label="Chess18 home">
+          <span class="wordmark-mark" aria-hidden="true">♞</span>
+          <span>CHESS<span class="wordmark-number">18</span></span>
+        </a>
+        <span class="edition-label"><span class="edition-dot"></span> CLASSIC / TWO PLAYER</span>
+      </header>
+
+      <main class="game-layout">
+        <section class="board-column" aria-label="Chessboard">
+          <div class="board-heading">
+            <div>
+              <p class="eyebrow">THE STANDARD GAME</p>
+              <h1>Make your move.</h1>
+            </div>
+            <span class="game-number">01 <span>/</span> 01</span>
+          </div>
+          <div class="board-frame">
+            <div id="board" class="board" role="grid" aria-label="Chess board"></div>
+          </div>
+          <div class="board-caption">
+            <span><span class="caption-marker marker-light"></span> WHITE</span>
+            <span class="caption-center">LOCAL GAME</span>
+            <span>BLACK <span class="caption-marker marker-dark"></span></span>
+          </div>
+        </section>
+
+        <aside class="game-panel" aria-label="Game information and controls">
+          <section class="turn-block" aria-live="polite">
+            <div class="turn-overline"><span id="turn-indicator" class="turn-indicator"></span><span id="turn-label">WHITE TO MOVE</span></div>
+            <p id="game-message" class="game-message">The board is set.</p>
+          </section>
+
+          <section class="moves-section" aria-labelledby="moves-heading">
+            <div class="section-heading">
+              <h2 id="moves-heading">Moves</h2>
+              <span id="move-count" class="move-count">0 plies</span>
+            </div>
+            <ol id="move-list" class="move-list" aria-label="Move history"></ol>
+          </section>
+
+          <div class="game-controls">
+            <button id="undo-button" class="button button-secondary" type="button" disabled>
+              <span aria-hidden="true">↶</span> Undo move
+            </button>
+            <button id="claim-draw-button" class="button button-secondary" type="button" disabled>
+              Claim draw
+            </button>
+            <button id="agree-draw-button" class="button button-secondary" type="button" disabled>
+              Agree draw
+            </button>
+            <button id="new-game-button" class="button button-primary" type="button">
+              <span aria-hidden="true">＋</span> New game
+            </button>
+          </div>
+          <p class="panel-footnote">A quiet table. A clear mind.</p>
+        </aside>
+      </main>
+
+      <footer class="page-footer">
+        <span>CHESS18</span>
+        <span>CLASSIC RULES · LOCAL PLAY</span>
+      </footer>
+    </div>
+
+    <dialog id="promotion-dialog" class="promotion-dialog" aria-labelledby="promotion-title">
+      <form method="dialog">
+        <p class="eyebrow">PAWN PROMOTION</p>
+        <h2 id="promotion-title">Choose a piece</h2>
+        <div class="promotion-options">
+          <button type="button" data-promotion="q" aria-label="Promote to queen"></button>
+          <button type="button" data-promotion="r" aria-label="Promote to rook"></button>
+          <button type="button" data-promotion="b" aria-label="Promote to bishop"></button>
+          <button type="button" data-promotion="n" aria-label="Promote to knight"></button>
+        </div>
+        <button id="cancel-promotion" class="text-button" type="submit">Cancel move</button>
+      </form>
+    </dialog>
+
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

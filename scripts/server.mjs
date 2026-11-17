@@ -1,0 +1,58 @@
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
+import { createServer } from "node:http";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const rootDirectory = path.join(projectRoot, "dist");
+const contentTypes = new Map([
+  [".css", "text/css; charset=utf-8"],
+  [".html", "text/html; charset=utf-8"],
+  [".js", "text/javascript; charset=utf-8"],
+]);
+
+const server = createServer(async (request, response) => {
+  try {
+    const requestUrl = new URL(request.url ?? "/", "http://localhost");
+    let relativePath = decodeURIComponent(requestUrl.pathname).replace(/^\/+/, "");
+    if (!relativePath || relativePath.endsWith("/")) relativePath += "index.html";
+
+    const filePath = path.resolve(rootDirectory, relativePath);
+    if (!filePath.startsWith(`${rootDirectory}${path.sep}`)) {
+      response.writeHead(403).end("Forbidden");
+      return;
+    }
+
+    const fileStats = await stat(filePath);
+    if (!fileStats.isFile()) {
+      response.writeHead(404).end("Not found");
+      return;
+    }
+
+    response.writeHead(200, {
+      "Cache-Control": "no-store",
+      "Content-Length": fileStats.size,
+      "Content-Type": contentTypes.get(path.extname(filePath)) ?? "application/octet-stream",
+      "X-Content-Type-Options": "nosniff",
+    });
+    createReadStream(filePath).pipe(response);
+  } catch {
+    response.writeHead(404).end("Not found");
+  }
+});
+
+const startServer = (port) => {
+  server.once("error", (error) => {
+    if (error.code === "EADDRINUSE") {
+      startServer(port + 1);
+      return;
+    }
+    throw error;
+  });
+  server.listen(port, "127.0.0.1", () => {
+    console.log(`Chess18 is running at http://127.0.0.1:${port}`);
+  });
+};
+
+startServer(Number(process.env.PORT ?? 4173));
