@@ -16,7 +16,28 @@ const pieceNames: Record<PieceSymbol, string> = {
   p: "pawn",
 };
 
-const game = new Chess();
+const chess18Positions = [
+  "RBBNKNQR",
+  "RBBNKQNR",
+  "RBBQKNNR",
+  "RBNNKQBR",
+  "RBNQKNBR",
+  "RBQNKNBR",
+  "RNBBKNQR",
+  "RNBBKQNR",
+  "RNBNKBQR",
+  "RNNBKQBR",
+  "RNNQKBBR",
+  "RNQBKNBR",
+  "RNQNKBBR",
+  "RQBBKNNR",
+  "RQBNKBNR",
+  "RQNBKNBR",
+  "RQNNKBBR",
+];
+const classicPosition = "RNBQKBNR";
+const startingPositionSelect = getElement<HTMLSelectElement>("starting-position");
+const game = new Chess(createStartingFen(selectStartingPosition()));
 const boardElement = getElement<HTMLDivElement>("board");
 const turnIndicator = getElement<HTMLSpanElement>("turn-indicator");
 const turnLabel = getElement<HTMLSpanElement>("turn-label");
@@ -46,6 +67,19 @@ function getElement<T extends HTMLElement>(id: string): T {
 
 function sideName(color: Color): string {
   return color === "w" ? "White" : "Black";
+}
+
+function selectStartingPosition(): string {
+  if (startingPositionSelect.value === "classic") return classicPosition;
+  if (startingPositionSelect.value === "random") {
+    return chess18Positions[Math.floor(Math.random() * chess18Positions.length)];
+  }
+  return chess18Positions[Number(startingPositionSelect.value) - 1] ?? classicPosition;
+}
+
+function createStartingFen(whiteBackRank: string): string {
+  const blackBackRank = whiteBackRank.toLowerCase();
+  return `${blackBackRank}/pppppppp/8/8/8/8/PPPPPPPP/${whiteBackRank} w KQkq - 0 1`;
 }
 
 function positionKey(fen: string): string {
@@ -304,7 +338,7 @@ agreeDrawButton.addEventListener("click", () => {
 
 newGameButton.addEventListener("click", () => {
   if (game.history().length > 0 && !window.confirm("Start a new game? The current game will be lost.")) return;
-  game.reset();
+  game.load(createStartingFen(selectStartingPosition()));
   agreedDraw = false;
   claimedDraw = null;
   selectedSquare = null;

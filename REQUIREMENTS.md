@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build a browser-based chess game in TypeScript. The first release is a complete standard chess game for two people sharing one device. Chess-variant design is a later milestone.
+Build a browser-based chess game in TypeScript for two people sharing one device. Classic chess remains available, and Chess18 adds a set of fixed back-rank arrangements while preserving standard chess rules.
 
 ## First Milestone: Standard Chess
 
@@ -32,18 +32,18 @@ Build a browser-based chess game in TypeScript. The first release is a complete 
 
 ## Acceptance Criteria
 
-- A new game starts with the standard position, White to move.
+- Selecting Classic chess and starting a game uses the standard position, with White to move.
 - A legal move updates the board, turn indicator, last-move highlight, and move list; an illegal move changes none of them.
 - Castling and en passant are accepted only when legal under standard chess rules.
 - A promoting pawn cannot complete its move until a promotion piece is chosen, and the selected piece appears on the board.
 - The game reports check and ends on checkmate or stalemate, with the correct result.
 - Insufficient-material, repetition, and move-count draws are handled according to standard chess rules, including claimable draws.
-- Undo restores the previous position and turn. Restart returns to the initial position.
+- Undo restores the previous position and turn. New Game starts the selected setup or a random Chess18 setup.
 - Two players can complete a game on one device without an account or network connection.
 
 ## Deferred and Out of Scope
 
-- Chess-variant rules and custom pieces
+- Variant rules beyond the Chess18 starting positions below
 - Online multiplayer, accounts, and matchmaking
 - A computer opponent
 - Clocks, tournaments, and game analysis
@@ -54,6 +54,34 @@ Build a browser-based chess game in TypeScript. The first release is a complete 
 - Keep the game self-contained and playable offline after dependencies are installed.
 - Use a maintained chess rules library for legal move generation and game-state rules rather than implementing chess rules from scratch.
 
-## Future Variant
+## Chess18 Variant
 
-Variant mechanics will be specified after the standard chess milestone is playable. They must not change the standard rules in this milestone.
+Chess18 changes only the starting back-rank arrangement. All other rules remain standard chess.
+
+The White back rank is selected from these 17 positions, in the order shown from White's perspective. Black uses the same file order on rank 8. The King remains on e-file and the Rooks remain on a- and h-files; the Bishops occupy opposite-colored squares.
+
+1. `RBBNKNQR`
+2. `RBBNKQNR`
+3. `RBBQKNNR`
+4. `RBNNKQBR`
+5. `RBNQKNBR`
+6. `RBQNKNBR`
+7. `RNBBKNQR`
+8. `RNBBKQNR`
+9. `RNBNKBQR`
+10. `RNNBKQBR`
+11. `RNNQKBBR`
+12. `RNQBKNBR`
+13. `RNQNKBBR`
+14. `RQBBKNNR`
+15. `RQBNKBNR`
+16. `RQNBKNBR`
+17. `RQNNKBBR`
+
+### Chess18 Acceptance Criteria
+
+- Players can select Random Chess18, Classic chess, or any of the 17 listed positions.
+- A new game uses the selected row for White on rank 1 and its same-file black-piece mirror on rank 8; pawns remain on their standard ranks.
+- Random Chess18 selects one of the 17 listed positions.
+- Every selected arrangement keeps the King on e-file, Rooks on a- and h-files, and Bishops on opposite-colored squares.
+- All standard chess rules, including legal moves, castling, en passant, promotion, check, and draw conditions, apply to each arrangement.

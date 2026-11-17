@@ -74,7 +74,7 @@ button {
 
 .edition-label,
 .eyebrow,
-.game-number,
+.setup-label,
 .board-caption,
 .page-footer,
 .turn-overline,
@@ -118,7 +118,7 @@ button {
   display: flex;
   justify-content: space-between;
   align-items: end;
-  margin-bottom: 19px;
+  margin-bottom: 16px;
 }
 
 .eyebrow {
@@ -142,14 +142,36 @@ h1 {
   line-height: 1.15;
 }
 
-.game-number {
-  padding-bottom: 3px;
+.setup-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.setup-label {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.setup-select {
+  width: min(250px, 70%);
+  min-width: 0;
+  height: 38px;
+  padding: 0 32px 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
   color: var(--ink);
+  background-color: #fffefa;
+  font: inherit;
   font-size: 12px;
 }
 
-.game-number span {
-  color: #a7afa8;
+.setup-select:focus-visible {
+  outline: 3px solid var(--gold);
+  outline-offset: 2px;
 }
 
 .board-frame {
@@ -623,6 +645,10 @@ h1 {
     grid-template-columns: 1fr;
     gap: 30px;
     padding-block: 30px 36px;
+  }
+
+  .setup-select {
+    width: min(250px, 68%);
   }
 
   .game-panel {

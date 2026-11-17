@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f2f4ed" />
-    <meta name="description" content="A two-player game of classic chess." />
-    <title>Chess18 | Classic Chess</title>
+    <meta name="description" content="A two-player game of classic chess and Chess18." />
+    <title>Chess18 | Local Chess</title>
     <link rel="stylesheet" href="/style.css" />
     <script type="importmap">
       {
@@ -22,17 +22,40 @@
           <span class="wordmark-mark" aria-hidden="true">♞</span>
           <span>CHESS<span class="wordmark-number">18</span></span>
         </a>
-        <span class="edition-label"><span class="edition-dot"></span> CLASSIC / TWO PLAYER</span>
+        <span class="edition-label"><span class="edition-dot"></span> CHESS18 / TWO PLAYER</span>
       </header>
 
       <main class="game-layout">
         <section class="board-column" aria-label="Chessboard">
           <div class="board-heading">
             <div>
-              <p class="eyebrow">THE STANDARD GAME</p>
+              <p class="eyebrow">CHESS18 VARIANT</p>
               <h1>Make your move.</h1>
             </div>
-            <span class="game-number">01 <span>/</span> 01</span>
+          </div>
+          <div class="setup-row">
+            <label class="setup-label" for="starting-position">STARTING POSITION</label>
+            <select id="starting-position" class="setup-select">
+              <option value="random">Random Chess18</option>
+              <option value="classic">Classic chess</option>
+              <option value="1">01 · RBBNKNQR</option>
+              <option value="2">02 · RBBNKQNR</option>
+              <option value="3">03 · RBBQKNNR</option>
+              <option value="4">04 · RBNNKQBR</option>
+              <option value="5">05 · RBNQKNBR</option>
+              <option value="6">06 · RBQNKNBR</option>
+              <option value="7">07 · RNBBKNQR</option>
+              <option value="8">08 · RNBBKQNR</option>
+              <option value="9">09 · RNBNKBQR</option>
+              <option value="10">10 · RNNBKQBR</option>
+              <option value="11">11 · RNNQKBBR</option>
+              <option value="12">12 · RNQBKNBR</option>
+              <option value="13">13 · RNQNKBBR</option>
+              <option value="14">14 · RQBBKNNR</option>
+              <option value="15">15 · RQBNKBNR</option>
+              <option value="16">16 · RQNBKNBR</option>
+              <option value="17">17 · RQNNKBBR</option>
+            </select>
           </div>
           <div class="board-frame">
             <div id="board" class="board" role="grid" aria-label="Chess board"></div>
@@ -78,7 +101,7 @@
 
       <footer class="page-footer">
         <span>CHESS18</span>
-        <span>CLASSIC RULES · LOCAL PLAY</span>
+        <span>STANDARD RULES · LOCAL PLAY</span>
       </footer>
     </div>
 
