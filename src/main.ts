@@ -138,12 +138,15 @@ function renderBoard(): void {
   const lastMove = game.history({ verbose: true }).at(-1);
   const checkedKing = getCheckedKingSquare();
   const finished = isGameFinished();
+  const flipped = game.turn() === "b";
   boardElement.replaceChildren();
 
   for (let row = 0; row < 8; row += 1) {
     for (let column = 0; column < 8; column += 1) {
-      const square = squareFor(row, column);
-      const piece = board[row][column];
+      const boardRow = flipped ? 7 - row : row;
+      const boardColumn = flipped ? 7 - column : column;
+      const square = squareFor(boardRow, boardColumn);
+      const piece = board[boardRow][boardColumn];
       const button = document.createElement("button");
       button.type = "button";
       button.className = `square ${(row + column) % 2 === 0 ? "square-light" : "square-dark"}`;
@@ -159,8 +162,8 @@ function renderBoard(): void {
         button.classList.add(piece ? "is-capture-target" : "is-legal-target");
       }
 
-      const fileLabel = row === 7 ? `<span class="coordinate coordinate-file">${"abcdefgh"[column]}</span>` : "";
-      const rankLabel = column === 0 ? `<span class="coordinate coordinate-rank">${8 - row}</span>` : "";
+      const fileLabel = row === 7 ? `<span class="coordinate coordinate-file">${square[0]}</span>` : "";
+      const rankLabel = column === 0 ? `<span class="coordinate coordinate-rank">${square[1]}</span>` : "";
       const pieceMarkup = piece
         ? `<span class="piece piece-${piece.color === "w" ? "white" : "black"}" aria-hidden="true">${glyphs[piece.color][piece.type]}</span>`
         : "";
