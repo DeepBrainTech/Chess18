@@ -399,6 +399,79 @@ h1 {
   line-height: 1.25;
 }
 
+.online-section {
+  display: grid;
+  gap: 10px;
+  padding-block: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.online-section .section-heading {
+  margin-bottom: 0;
+}
+
+.connection-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.join-room-form {
+  display: grid;
+  gap: 7px;
+}
+
+.join-room-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.room-code-input {
+  min-width: 0;
+  height: 43px;
+  padding-inline: 11px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--ink);
+  background: #fffefa;
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.room-code-input:focus-visible {
+  outline: 3px solid var(--gold);
+  outline-offset: 2px;
+}
+
+.active-room {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.active-room[hidden] {
+  display: none;
+}
+
+.active-room strong {
+  color: var(--green-deep);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+}
+
+.active-room .text-button {
+  margin: 0;
+}
+
 .moves-section {
   min-height: 215px;
   padding-block: 20px 16px;
@@ -657,6 +730,10 @@ h1 {
 
   .turn-block {
     min-height: 92px;
+  }
+
+  .online-section {
+    padding-block: 16px;
   }
 
   .moves-section {

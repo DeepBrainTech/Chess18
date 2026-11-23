@@ -3,9 +3,12 @@ import { stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { Server } from "socket.io";
+import { attachOnlineRooms } from "./online-rooms.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const rootDirectory = path.join(projectRoot, "dist");
+const dataDirectory = path.join(projectRoot, "data");
 const contentTypes = new Map([
   [".css", "text/css; charset=utf-8"],
   [".html", "text/html; charset=utf-8"],
@@ -42,6 +45,9 @@ const server = createServer(async (request, response) => {
   }
 });
 
+const io = new Server(server, { maxHttpBufferSize: 64 * 1024 });
+await attachOnlineRooms(io, dataDirectory);
+
 const startServer = (port) => {
   server.once("error", (error) => {
     if (error.code === "EADDRINUSE") {
@@ -50,8 +56,9 @@ const startServer = (port) => {
     }
     throw error;
   });
-  server.listen(port, "127.0.0.1", () => {
-    console.log(`Chess18 is running at http://127.0.0.1:${port}`);
+  server.listen(port, "0.0.0.0", () => {
+    console.log(`Chess18 is running at http://localhost:${port}`);
+    console.log("Other devices can connect using this computer's LAN address.");
   });
 };
 

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f2f4ed" />
     <meta name="description" content="A two-player game of classic chess and Chess18." />
-    <title>Chess18 | Local Chess</title>
+    <title>Chess18 | Chess</title>
     <link rel="stylesheet" href="/style.css" />
     <script type="importmap">
       {
@@ -14,6 +14,7 @@
         }
       }
     </script>
+    <script src="/socket.io/socket.io.js"></script>
   </head>
   <body>
     <div id="app">
@@ -71,6 +72,26 @@
           <section class="turn-block" aria-live="polite">
             <div class="turn-overline"><span id="turn-indicator" class="turn-indicator"></span><span id="turn-label">WHITE TO MOVE</span></div>
             <p id="game-message" class="game-message">The board is set.</p>
+          </section>
+
+          <section class="online-section" aria-labelledby="online-heading">
+            <div class="section-heading">
+              <h2 id="online-heading">Online room</h2>
+              <span class="move-count">PRIVATE</span>
+            </div>
+            <p id="connection-status" class="connection-status" role="status">Local play is ready. Online play is optional.</p>
+            <button id="create-room-button" class="button button-secondary" type="button">Create room</button>
+            <form id="join-room-form" class="join-room-form">
+              <label class="setup-label" for="room-code-input">JOIN WITH ROOM CODE</label>
+              <div class="join-room-controls">
+                <input id="room-code-input" class="room-code-input" type="text" maxlength="8" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Room code" />
+                <button id="join-room-button" class="button button-secondary" type="submit">Join</button>
+              </div>
+            </form>
+            <div id="active-room" class="active-room" hidden>
+              <span>ROOM <strong id="room-code"></strong> · <span id="seat-label"></span></span>
+              <button id="copy-room-link" class="text-button" type="button">Copy invite link</button>
+            </div>
           </section>
 
           <section class="moves-section" aria-labelledby="moves-heading">

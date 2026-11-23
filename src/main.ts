@@ -1,6 +1,52 @@
 import { Chess, type Color, type Move, type PieceSymbol, type Square } from "chess.js";
 
 type PromotionChoice = "q" | "r" | "b" | "n";
+type PlayerColor = "white" | "black";
+type OnlineStatus = "waiting" | "playing" | "finished";
+
+interface OnlineMove {
+  from: Square;
+  to: Square;
+  promotion?: PromotionChoice;
+  san: string;
+  color: Color;
+}
+
+interface OnlineRoomState {
+  code: string;
+  status: OnlineStatus;
+  startingFen: string;
+  fen: string;
+  turn: Color;
+  moves: OnlineMove[];
+  players: Record<PlayerColor, { occupied: boolean; connected: boolean }>;
+  result: { winner: PlayerColor | null; reason: string } | null;
+  drawOffer: PlayerColor | null;
+}
+
+interface OnlineAck {
+  ok: boolean;
+  room?: OnlineRoomState;
+  color?: PlayerColor;
+  seatToken?: string;
+  error?: string;
+}
+
+interface OnlineSocket {
+  connected: boolean;
+  on(event: "connect" | "disconnect", listener: () => void): this;
+  on(event: "connect_error", listener: (error: Error) => void): this;
+  on(event: "room:state", listener: (state: OnlineRoomState) => void): this;
+  on(event: "room:error", listener: (response: { message: string }) => void): this;
+  on(event: "room:closed", listener: () => void): this;
+  emit(event: string, payload: Record<string, unknown>, acknowledge?: (response: OnlineAck) => void): this;
+}
+
+declare global {
+  interface Window {
+    io?: () => OnlineSocket;
+  }
+}
 
 const glyphs: Record<Color, Record<PieceSymbol, string>> = {
   w: { k: "♔", q: "♕", r: "♖", b: "♗", n: "♘", p: "♙" },
@@ -49,6 +95,15 @@ const undoButton = getElement<HTMLButtonElement>("undo-button");
 const claimDrawButton = getElement<HTMLButtonElement>("claim-draw-button");
 const agreeDrawButton = getElement<HTMLButtonElement>("agree-draw-button");
 const newGameButton = getElement<HTMLButtonElement>("new-game-button");
+const createRoomButton = getElement<HTMLButtonElement>("create-room-button");
+const joinRoomForm = getElement<HTMLFormElement>("join-room-form");
+const joinRoomButton = getElement<HTMLButtonElement>("join-room-button");
+const roomCodeInput = getElement<HTMLInputElement>("room-code-input");
+const connectionStatus = getElement<HTMLParagraphElement>("connection-status");
+const activeRoomElement = getElement<HTMLDivElement>("active-room");
+const roomCodeElement = getElement<HTMLElement>("room-code");
+const seatLabel = getElement<HTMLElement>("seat-label");
+const copyRoomLinkButton = getElement<HTMLButtonElement>("copy-room-link");
 const promotionDialog = getElement<HTMLDialogElement>("promotion-dialog");
 const promotionButtons = promotionDialog.querySelectorAll<HTMLButtonElement>("[data-promotion]");
 
@@ -57,6 +112,40 @@ let legalMoves: Move[] = [];
 let pendingPromotion: { from: Square; to: Square } | null = null;
 let agreedDraw = false;
 let claimedDraw: string | null = null;
+let gameMode: "local" | "online" = "local";
+let onlineRoomCode: string | null = null;
+let onlineSeatToken: string | null = null;
+let onlineColor: Color | null = null;
+let onlineRoomStatus: OnlineStatus | null = null;
+let onlineResult: OnlineRoomState["result"] = null;
+let onlineDrawOffer: PlayerColor | null = null;
+let onlinePlayers: OnlineRoomState["players"] | null = null;
+let pendingOnlineMove = false;
+let onlineMessage = "";
+let onlineConnectionState: "connected" | "disconnected" = "disconnected";
+const onlineSocket = typeof window.io === "function" ? window.io() : null;
+const onlineSessionKey = "chess18-online-seat";
+
+interface SavedOnlineSession {
+  code: string;
+  seatToken: string;
+}
+
+function readSavedOnlineSession(): SavedOnlineSession | null {
+  try {
+    const saved = localStorage.getItem(onlineSessionKey);
+    if (!saved) return null;
+    const parsed: unknown = JSON.parse(saved);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const { code, seatToken } = parsed as Record<string, unknown>;
+    if (typeof code !== "string" || typeof seatToken !== "string") return null;
+    return { code, seatToken };
+  } catch {
+    return null;
+  }
+}
+
+let savedOnlineSession = readSavedOnlineSession();
 
 function getElement<T extends HTMLElement>(id: string): T {
   const element = document.getElementById(id);
@@ -104,6 +193,7 @@ function halfMoveClock(): number {
 }
 
 function isGameFinished(): boolean {
+  if (gameMode === "online") return onlineRoomStatus === "finished";
   return game.isCheckmate()
     || game.isStalemate()
     || game.isInsufficientMaterial()
@@ -138,7 +228,12 @@ function renderBoard(): void {
   const lastMove = game.history({ verbose: true }).at(-1);
   const checkedKing = getCheckedKingSquare();
   const finished = isGameFinished();
-  const flipped = game.turn() === "b";
+  const canPlay = gameMode === "local"
+    || (onlineRoomStatus === "playing"
+      && onlineColor === game.turn()
+      && onlineConnectionState === "connected"
+      && !pendingOnlineMove);
+  const flipped = gameMode === "online" ? onlineColor === "b" : game.turn() === "b";
   boardElement.replaceChildren();
 
   for (let row = 0; row < 8; row += 1) {
@@ -151,7 +246,7 @@ function renderBoard(): void {
       button.type = "button";
       button.className = `square ${(row + column) % 2 === 0 ? "square-light" : "square-dark"}`;
       button.dataset.square = square;
-      button.disabled = finished;
+      button.disabled = finished || !canPlay;
 
       if (square === selectedSquare) button.classList.add("is-selected");
       if (square === lastMove?.from || square === lastMove?.to) button.classList.add("is-last-move");
@@ -178,6 +273,29 @@ function renderBoard(): void {
 }
 
 function resultMessage(): { label: string; message: string; color: Color | null } {
+  if (gameMode === "online") {
+    if (onlineRoomStatus === "waiting") {
+      return { label: "WAITING FOR PLAYER", message: "Share your room code to start the game.", color: null };
+    }
+    if (onlineRoomStatus === "finished" && onlineResult) {
+      if (onlineResult.winner) {
+        const winner = onlineResult.winner === "white" ? "White" : "Black";
+        return { label: "GAME OVER", message: `${winner} wins by ${onlineResult.reason}.`, color: null };
+      }
+      return { label: "GAME OVER", message: `${onlineResult.reason[0].toUpperCase()}${onlineResult.reason.slice(1)}.`, color: null };
+    }
+    if (onlineRoomStatus === "playing" && onlineConnectionState === "disconnected") {
+      return { label: "RECONNECTING", message: "Waiting to reconnect to the room.", color: null };
+    }
+    if (onlineDrawOffer && onlineRoomStatus === "playing") {
+      const offeredBy = onlineDrawOffer === "white" ? "White" : "Black";
+      return {
+        label: onlineDrawOffer === (onlineColor === "w" ? "white" : "black") ? "DRAW OFFER SENT" : "DRAW OFFER",
+        message: `${offeredBy} offered a draw.`,
+        color: game.turn(),
+      };
+    }
+  }
   if (agreedDraw) return { label: "GAME OVER", message: "Draw by agreement.", color: null };
   if (claimedDraw) return { label: "GAME OVER", message: `Draw claimed: ${claimedDraw}.`, color: null };
   if (game.isCheckmate()) {
@@ -213,10 +331,64 @@ function renderStatus(): void {
   turnIndicator.classList.toggle("turn-indicator-finished", status.color === null);
 
   const history = game.history({ verbose: true });
-  undoButton.disabled = history.length === 0 || agreedDraw || claimedDraw !== null;
-  claimDrawButton.disabled = isGameFinished() || !canClaimDraw();
-  agreeDrawButton.disabled = isGameFinished() || history.length === 0;
+  const isOnline = gameMode === "online";
+  const canActOnline = onlineRoomStatus === "playing"
+    && onlineConnectionState === "connected"
+    && onlineColor === game.turn();
+  const ownColor = onlineColor === "w" ? "white" : "black";
+  const canAcceptDraw = onlineConnectionState === "connected"
+    && onlineRoomStatus === "playing"
+    && onlineDrawOffer !== null
+    && onlineDrawOffer !== ownColor;
+  undoButton.disabled = isOnline || history.length === 0 || agreedDraw || claimedDraw !== null;
+  claimDrawButton.disabled = isGameFinished() || !canClaimDraw() || (isOnline && !canActOnline);
+  agreeDrawButton.disabled = isGameFinished()
+    || (!isOnline && history.length === 0)
+    || (isOnline && (
+      (!canActOnline && !canAcceptDraw)
+      || (onlineDrawOffer !== null && onlineDrawOffer === ownColor)
+    ));
+  if (isOnline) {
+    agreeDrawButton.textContent = onlineDrawOffer
+      ? onlineDrawOffer === (onlineColor === "w" ? "white" : "black") ? "Draw offered" : "Accept draw"
+      : "Offer draw";
+  } else {
+    agreeDrawButton.textContent = "Agree draw";
+  }
+  newGameButton.textContent = isOnline
+    ? onlineRoomStatus === "waiting" ? "Cancel room and play locally" : "Resign and play locally"
+    : "＋ New game";
+  newGameButton.disabled = isOnline && onlineConnectionState !== "connected";
   moveCount.textContent = `${history.length} ${history.length === 1 ? "ply" : "plies"}`;
+  renderOnlineControls();
+}
+
+function renderOnlineControls(): void {
+  const onlineActive = gameMode === "online" && onlineRoomCode !== null;
+  createRoomButton.disabled = onlineActive || !onlineSocket?.connected;
+  joinRoomButton.disabled = onlineActive || !onlineSocket?.connected;
+  roomCodeInput.disabled = onlineActive;
+  activeRoomElement.hidden = !onlineActive;
+  if (onlineRoomCode) {
+    roomCodeElement.textContent = onlineRoomCode;
+    seatLabel.textContent = onlineColor === "w" ? "WHITE" : "BLACK";
+  }
+  if (onlineActive) {
+    const status = onlineRoomStatus === "waiting"
+      ? "Waiting for another player to join."
+      : onlineRoomStatus === "finished"
+        ? "This game has ended."
+        : onlinePlayers?.white.connected && onlinePlayers.black.connected
+          ? "Both players are connected."
+          : "Opponent disconnected. Their seat is reserved.";
+    connectionStatus.textContent = onlineConnectionState === "disconnected"
+      ? "Connection lost. Reconnecting…"
+      : onlineMessage || status;
+  } else if (onlineSocket?.connected) {
+    connectionStatus.textContent = onlineMessage || "Local play is ready. Online play is optional.";
+  } else {
+    connectionStatus.textContent = onlineMessage || "Online rooms unavailable. Local play is ready.";
+  }
 }
 
 function renderMoves(): void {
@@ -248,8 +420,116 @@ function canClaimDraw(): boolean {
   return currentPositionOccurrences() >= 3 || halfMoveClock() >= 100;
 }
 
+function emitOnlineEvent(event: string, payload: Record<string, unknown>): Promise<OnlineAck> {
+  if (!onlineSocket?.connected) {
+    return Promise.reject(new Error("The online server is not connected."));
+  }
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => reject(new Error("The server did not respond.")), 10000);
+    onlineSocket.emit(event, payload, (response) => {
+      window.clearTimeout(timeout);
+      if (response.ok) resolve(response);
+      else reject(new Error(response.error ?? "The server rejected the request."));
+    });
+  });
+}
+
+function saveOnlineSession(code: string, seatToken: string): boolean {
+  try {
+    localStorage.setItem(onlineSessionKey, JSON.stringify({ code, seatToken }));
+    savedOnlineSession = { code, seatToken };
+    return true;
+  } catch {
+    onlineMessage = "This browser cannot save your seat for reconnecting.";
+    return false;
+  }
+}
+
+function clearOnlineSession(): void {
+  try {
+    localStorage.removeItem(onlineSessionKey);
+  } catch {
+    onlineMessage = "Could not clear the saved room from this browser.";
+  }
+  savedOnlineSession = null;
+}
+
+function applyOnlineRoomState(state: OnlineRoomState): void {
+  if (state.code !== onlineRoomCode) return;
+  try {
+    game.load(state.startingFen);
+    for (const move of state.moves) {
+      game.move({ from: move.from, to: move.to, promotion: move.promotion });
+    }
+  } catch {
+    onlineMessage = "The server returned a game position that could not be loaded.";
+    return;
+  }
+  startingFen = state.startingFen;
+  onlineRoomStatus = state.status;
+  onlineResult = state.result;
+  onlineDrawOffer = state.drawOffer;
+  onlinePlayers = state.players;
+  pendingOnlineMove = false;
+  selectedSquare = null;
+  legalMoves = [];
+  agreedDraw = state.result?.reason === "draw by agreement";
+  claimedDraw = state.result?.reason === "claimed draw" ? "a draw claim" : null;
+  onlineMessage = "";
+  render();
+}
+
+function activateOnlineRoom(room: OnlineRoomState, color: PlayerColor, seatToken: string): boolean {
+  onlineRoomCode = room.code;
+  onlineSeatToken = seatToken;
+  onlineColor = color === "white" ? "w" : "b";
+  gameMode = "online";
+  roomCodeInput.value = room.code;
+  if (!saveOnlineSession(room.code, seatToken)) return false;
+  applyOnlineRoomState(room);
+  return true;
+}
+
+function resetToLocalGame(): void {
+  clearOnlineSession();
+  gameMode = "local";
+  onlineRoomCode = null;
+  onlineSeatToken = null;
+  onlineColor = null;
+  onlineRoomStatus = null;
+  onlineResult = null;
+  onlineDrawOffer = null;
+  onlinePlayers = null;
+  onlineMessage = "";
+  pendingOnlineMove = false;
+  startingFen = createStartingFen(selectStartingPosition());
+  game.load(startingFen);
+  agreedDraw = false;
+  claimedDraw = null;
+  selectedSquare = null;
+  legalMoves = [];
+  render();
+}
+
+async function submitOnlineDraw(action: "claim" | "offer" | "accept"): Promise<void> {
+  if (!onlineRoomCode || !onlineSeatToken) return;
+  try {
+    await emitOnlineEvent("game:draw", {
+      code: onlineRoomCode,
+      seatToken: onlineSeatToken,
+      action,
+    });
+    onlineMessage = "";
+  } catch (error) {
+    onlineMessage = error instanceof Error ? error.message : "The draw request failed.";
+  }
+  render();
+}
+
 function handleSquareClick(square: Square): void {
   if (isGameFinished()) return;
+  if (gameMode === "online"
+    && (onlineRoomStatus !== "playing" || onlineColor !== game.turn() || onlineConnectionState !== "connected" || pendingOnlineMove)) return;
 
   if (selectedSquare) {
     const targetMoves = legalMoves.filter((move) => move.to === square);
@@ -276,6 +556,29 @@ function handleSquareClick(square: Square): void {
 }
 
 function makeMove(from: Square, to: Square, promotion?: PromotionChoice): void {
+  if (gameMode === "online") {
+    if (!onlineRoomCode || !onlineSeatToken || pendingOnlineMove) return;
+    pendingOnlineMove = true;
+    selectedSquare = null;
+    legalMoves = [];
+    render();
+    emitOnlineEvent("game:move", {
+      code: onlineRoomCode,
+      seatToken: onlineSeatToken,
+      from,
+      to,
+      promotion,
+    }).then(() => {
+      pendingOnlineMove = false;
+      onlineMessage = "";
+      render();
+    }).catch((error: unknown) => {
+      pendingOnlineMove = false;
+      onlineMessage = error instanceof Error ? error.message : "The move was rejected.";
+      render();
+    });
+    return;
+  }
   try {
     game.move({ from, to, promotion });
   } catch {
@@ -314,6 +617,7 @@ getElement<HTMLButtonElement>("cancel-promotion").addEventListener("click", () =
 });
 
 undoButton.addEventListener("click", () => {
+  if (gameMode === "online") return;
   if (game.undo()) {
     agreedDraw = false;
     claimedDraw = null;
@@ -324,6 +628,10 @@ undoButton.addEventListener("click", () => {
 });
 
 claimDrawButton.addEventListener("click", () => {
+  if (gameMode === "online") {
+    void submitOnlineDraw("claim");
+    return;
+  }
   if (!canClaimDraw()) return;
   claimedDraw = currentPositionOccurrences() >= 3 ? "threefold repetition" : "the 50-move rule";
   selectedSquare = null;
@@ -333,6 +641,11 @@ claimDrawButton.addEventListener("click", () => {
 
 agreeDrawButton.addEventListener("click", () => {
   if (isGameFinished()) return;
+  if (gameMode === "online") {
+    const ownColor = onlineColor === "w" ? "white" : "black";
+    void submitOnlineDraw(onlineDrawOffer && onlineDrawOffer !== ownColor ? "accept" : "offer");
+    return;
+  }
   if (window.confirm("Both players agree to end this game as a draw?")) {
     agreedDraw = true;
     selectedSquare = null;
@@ -341,15 +654,160 @@ agreeDrawButton.addEventListener("click", () => {
   }
 });
 
-newGameButton.addEventListener("click", () => {
+newGameButton.addEventListener("click", async () => {
+  if (gameMode === "online") {
+    const prompt = onlineRoomStatus === "waiting"
+      ? "Cancel this room and return to local play?"
+      : "Resign this online game and return to local play?";
+    if (!window.confirm(prompt) || !onlineRoomCode || !onlineSeatToken) return;
+    try {
+      await emitOnlineEvent("room:leave", { code: onlineRoomCode, seatToken: onlineSeatToken });
+      resetToLocalGame();
+    } catch (error) {
+      onlineMessage = error instanceof Error ? error.message : "Could not leave the online room.";
+      render();
+    }
+    return;
+  }
   if (game.history().length > 0 && !window.confirm("Start a new game? The current game will be lost.")) return;
-  startingFen = createStartingFen(selectStartingPosition());
-  game.load(startingFen);
-  agreedDraw = false;
-  claimedDraw = null;
-  selectedSquare = null;
-  legalMoves = [];
+  resetToLocalGame();
+});
+
+createRoomButton.addEventListener("click", async () => {
+  if (!onlineSocket?.connected) {
+    onlineMessage = "The online server is not connected.";
+    render();
+    return;
+  }
+  createRoomButton.disabled = true;
+  try {
+    const response = await emitOnlineEvent("room:create", {
+      startingFen: createStartingFen(selectStartingPosition()),
+      colorPreference: "random",
+    });
+    if (!response.room || !response.color || !response.seatToken) {
+      throw new Error("The server returned an incomplete room response.");
+    }
+    if (!activateOnlineRoom(response.room, response.color, response.seatToken)) {
+      await emitOnlineEvent("room:leave", { code: response.room.code, seatToken: response.seatToken });
+      resetToLocalGame();
+      onlineMessage = "Your browser could not save the room seat.";
+    }
+  } catch (error) {
+    onlineMessage = error instanceof Error ? error.message : "Could not create an online room.";
+  }
   render();
 });
+
+joinRoomForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const code = roomCodeInput.value.trim().toUpperCase();
+  if (!code) {
+    onlineMessage = "Enter a room code to join.";
+    render();
+    return;
+  }
+  joinRoomButton.disabled = true;
+  try {
+    const response = await emitOnlineEvent("room:join", { code });
+    if (!response.room || !response.color || !response.seatToken) {
+      throw new Error("The server returned an incomplete room response.");
+    }
+    if (!activateOnlineRoom(response.room, response.color, response.seatToken)) {
+      await emitOnlineEvent("room:leave", { code: response.room.code, seatToken: response.seatToken });
+      resetToLocalGame();
+      onlineMessage = "Your browser could not save the room seat.";
+    }
+  } catch (error) {
+    onlineMessage = error instanceof Error ? error.message : "Could not join the room.";
+  }
+  render();
+});
+
+copyRoomLinkButton.addEventListener("click", async () => {
+  if (!onlineRoomCode) return;
+  const inviteUrl = new URL(window.location.href);
+  inviteUrl.searchParams.set("room", onlineRoomCode);
+  try {
+    await navigator.clipboard.writeText(inviteUrl.toString());
+    onlineMessage = "Invite link copied.";
+  } catch {
+    onlineMessage = `Share room code ${onlineRoomCode} with the other player.`;
+  }
+  render();
+});
+
+if (onlineSocket) {
+  onlineSocket.on("connect", () => {
+    onlineConnectionState = "connected";
+    if (savedOnlineSession && gameMode !== "online") {
+      onlineRoomCode = savedOnlineSession.code;
+      onlineSeatToken = savedOnlineSession.seatToken;
+      gameMode = "online";
+    }
+    if (savedOnlineSession && onlineRoomCode === savedOnlineSession.code) {
+      onlineRoomCode = savedOnlineSession.code;
+      onlineSeatToken = savedOnlineSession.seatToken;
+      gameMode = "online";
+      render();
+      emitOnlineEvent("room:rejoin", {
+        code: savedOnlineSession.code,
+        seatToken: savedOnlineSession.seatToken,
+      }).then((response) => {
+        if (!response.room || !response.color) throw new Error("The server returned an incomplete reconnect response.");
+        onlineColor = response.color === "white" ? "w" : "b";
+        applyOnlineRoomState(response.room);
+      }).catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : "Could not reclaim the saved seat.";
+        clearOnlineSession();
+        gameMode = "local";
+        onlineRoomCode = null;
+        onlineSeatToken = null;
+        onlineColor = null;
+        onlineRoomStatus = null;
+        onlinePlayers = null;
+        onlineResult = null;
+        onlineMessage = message;
+        render();
+      });
+    } else {
+      render();
+    }
+  });
+  onlineSocket.on("disconnect", () => {
+    onlineConnectionState = "disconnected";
+    render();
+  });
+  onlineSocket.on("connect_error", () => {
+    onlineConnectionState = "disconnected";
+    render();
+  });
+  onlineSocket.on("room:state", (state) => applyOnlineRoomState(state));
+  onlineSocket.on("room:error", ({ message }) => {
+    onlineMessage = message;
+    render();
+  });
+  onlineSocket.on("room:closed", () => {
+    if (gameMode !== "online") return;
+    clearOnlineSession();
+    gameMode = "local";
+    onlineRoomCode = null;
+    onlineSeatToken = null;
+    onlineColor = null;
+    onlineRoomStatus = null;
+    onlinePlayers = null;
+    onlineResult = null;
+    onlineMessage = "This waiting room was closed.";
+    render();
+  });
+}
+
+if (savedOnlineSession) {
+  gameMode = "online";
+  onlineRoomCode = savedOnlineSession.code;
+  onlineSeatToken = savedOnlineSession.seatToken;
+}
+const roomFromInvite = new URLSearchParams(window.location.search).get("room");
+if (roomFromInvite && !savedOnlineSession) roomCodeInput.value = roomFromInvite.toUpperCase();
 
 render();
