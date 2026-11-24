@@ -29,7 +29,35 @@ interface OnlineAck {
   room?: OnlineRoomState;
   color?: PlayerColor;
   seatToken?: string;
+  persistence?: "postgres" | "file";
+  profile?: GuestProfile;
+  guestToken?: string;
+  stats?: GuestStats | null;
+  games?: ProfileGame[];
   error?: string;
+}
+
+interface GuestStats {
+  games: number;
+  wins: number;
+  draws: number;
+  losses: number;
+}
+
+interface ProfileGame {
+  id: string;
+  roomCode: string;
+  mode: "classic" | "chess18";
+  color: PlayerColor;
+  result: PlayerColor | "draw";
+  reason: string;
+  finishedAt: string;
+}
+
+interface GuestProfile {
+  guestToken: string;
+  stats: GuestStats;
+  games: ProfileGame[];
 }
 
 interface OnlineSocket {
@@ -104,6 +132,15 @@ const activeRoomElement = getElement<HTMLDivElement>("active-room");
 const roomCodeElement = getElement<HTMLElement>("room-code");
 const seatLabel = getElement<HTMLElement>("seat-label");
 const copyRoomLinkButton = getElement<HTMLButtonElement>("copy-room-link");
+const profileStatus = getElement<HTMLSpanElement>("profile-status");
+const profileMessage = getElement<HTMLParagraphElement>("profile-message");
+const profileHistory = getElement<HTMLOListElement>("profile-history");
+const profileStatsElements: Record<keyof GuestStats, HTMLElement> = {
+  games: getElement<HTMLElement>("profile-games"),
+  wins: getElement<HTMLElement>("profile-wins"),
+  draws: getElement<HTMLElement>("profile-draws"),
+  losses: getElement<HTMLElement>("profile-losses"),
+};
 const promotionDialog = getElement<HTMLDialogElement>("promotion-dialog");
 const promotionButtons = promotionDialog.querySelectorAll<HTMLButtonElement>("[data-promotion]");
 
@@ -125,6 +162,12 @@ let onlineMessage = "";
 let onlineConnectionState: "connected" | "disconnected" = "disconnected";
 const onlineSocket = typeof window.io === "function" ? window.io() : null;
 const onlineSessionKey = "chess18-online-seat";
+const guestProfileKey = "chess18-guest-profile";
+let profileReady = false;
+let profilePersistence: "postgres" | "file" | null = null;
+let guestToken = readGuestToken();
+let guestStats: GuestStats = { games: 0, wins: 0, draws: 0, losses: 0 };
+let guestGames: ProfileGame[] = [];
 
 interface SavedOnlineSession {
   code: string;
@@ -146,6 +189,15 @@ function readSavedOnlineSession(): SavedOnlineSession | null {
 }
 
 let savedOnlineSession = readSavedOnlineSession();
+
+function readGuestToken(): string | null {
+  try {
+    const token = localStorage.getItem(guestProfileKey);
+    return token && /^[A-Za-z0-9_-]{43}$/.test(token) ? token : null;
+  } catch {
+    return null;
+  }
+}
 
 function getElement<T extends HTMLElement>(id: string): T {
   const element = document.getElementById(id);
@@ -365,8 +417,8 @@ function renderStatus(): void {
 
 function renderOnlineControls(): void {
   const onlineActive = gameMode === "online" && onlineRoomCode !== null;
-  createRoomButton.disabled = onlineActive || !onlineSocket?.connected;
-  joinRoomButton.disabled = onlineActive || !onlineSocket?.connected;
+  createRoomButton.disabled = onlineActive || !onlineSocket?.connected || !profileReady;
+  joinRoomButton.disabled = onlineActive || !onlineSocket?.connected || !profileReady;
   roomCodeInput.disabled = onlineActive;
   activeRoomElement.hidden = !onlineActive;
   if (onlineRoomCode) {
@@ -388,6 +440,55 @@ function renderOnlineControls(): void {
     connectionStatus.textContent = onlineMessage || "Local play is ready. Online play is optional.";
   } else {
     connectionStatus.textContent = onlineMessage || "Online rooms unavailable. Local play is ready.";
+  }
+}
+
+function renderGuestProfile(): void {
+  for (const [stat, element] of Object.entries(profileStatsElements) as [keyof GuestStats, HTMLElement][]) {
+    element.textContent = String(guestStats[stat]);
+  }
+  profileStatus.textContent = !onlineSocket?.connected
+    ? "OFFLINE"
+    : !profileReady
+      ? "CONNECTING"
+      : profilePersistence === "postgres"
+        ? "GUEST"
+        : "LOCAL ONLY";
+  profileMessage.textContent = !onlineSocket?.connected
+    ? "Reconnect to load saved online game history."
+    : !profileReady
+      ? "Connecting to your guest profile."
+      : profilePersistence === "postgres"
+        ? "Online games are saved to this browser guest profile."
+        : "History is disabled until PostgreSQL is configured.";
+
+  profileHistory.replaceChildren();
+  if (guestGames.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "move-empty";
+    empty.textContent = "No completed online games yet";
+    profileHistory.append(empty);
+    return;
+  }
+
+  for (const gameRecord of guestGames) {
+    const row = document.createElement("li");
+    row.className = "profile-game";
+    const opponent = document.createElement("span");
+    opponent.textContent = `vs ${gameRecord.color === "white" ? "Black" : "White"} · ${gameRecord.mode === "classic" ? "Classic" : "Chess18"}`;
+    const outcome = document.createElement("strong");
+    outcome.className = "profile-game-result";
+    outcome.textContent = gameRecord.result === "draw"
+      ? "Draw"
+      : gameRecord.result === gameRecord.color
+        ? "Win"
+        : "Loss";
+    const details = document.createElement("span");
+    details.className = "profile-game-meta";
+    const date = new Date(gameRecord.finishedAt);
+    details.textContent = `Room ${gameRecord.roomCode} · ${Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString()}`;
+    row.append(opponent, outcome, details);
+    profileHistory.append(row);
   }
 }
 
@@ -414,6 +515,7 @@ function render(): void {
   renderBoard();
   renderStatus();
   renderMoves();
+  renderGuestProfile();
 }
 
 function canClaimDraw(): boolean {
@@ -432,6 +534,69 @@ function emitOnlineEvent(event: string, payload: Record<string, unknown>): Promi
       else reject(new Error(response.error ?? "The server rejected the request."));
     });
   });
+}
+
+function updateGuestProfile(profile: GuestProfile): void {
+  try {
+    localStorage.setItem(guestProfileKey, profile.guestToken);
+    guestToken = profile.guestToken;
+  } catch {
+    guestToken = null;
+    profilePersistence = "file";
+    profileReady = false;
+    profileMessage.textContent = "The browser cannot save your guest profile. Enable local storage to save history.";
+    render();
+    return;
+  }
+  guestStats = profile.stats;
+  guestGames = profile.games;
+  profileReady = true;
+  render();
+}
+
+async function initializeGuestProfile(): Promise<void> {
+  profileReady = false;
+  render();
+  try {
+    const response = await emitOnlineEvent("profile:identify", { guestToken });
+    profilePersistence = response.persistence ?? "file";
+    if (response.profile) {
+      updateGuestProfile(response.profile);
+      return;
+    }
+    if (response.guestToken) {
+      try {
+        localStorage.setItem(guestProfileKey, response.guestToken);
+        guestToken = response.guestToken;
+      } catch {
+        guestToken = null;
+      }
+    }
+    guestStats = response.stats ?? { games: 0, wins: 0, draws: 0, losses: 0 };
+    guestGames = response.games ?? [];
+    profileReady = response.persistence === "file" || Boolean(guestToken);
+  } catch (error) {
+    profilePersistence = null;
+    profileReady = false;
+    profileMessage.textContent = error instanceof Error
+      ? `Guest profile unavailable: ${error.message}`
+      : "Guest profile could not be loaded.";
+  }
+  render();
+}
+
+async function refreshGuestHistory(): Promise<void> {
+  if (!guestToken || profilePersistence !== "postgres") return;
+  try {
+    const response = await emitOnlineEvent("profile:history", { guestToken });
+    guestStats = response.stats ?? guestStats;
+    guestGames = response.games ?? guestGames;
+    renderGuestProfile();
+  } catch (error) {
+    profileMessage.textContent = error instanceof Error
+      ? `Could not refresh game history: ${error.message}`
+      : "Could not refresh game history.";
+  }
 }
 
 function saveOnlineSession(code: string, seatToken: string): boolean {
@@ -456,6 +621,7 @@ function clearOnlineSession(): void {
 
 function applyOnlineRoomState(state: OnlineRoomState): void {
   if (state.code !== onlineRoomCode) return;
+  const gameJustFinished = state.status === "finished" && onlineRoomStatus !== "finished";
   try {
     game.load(state.startingFen);
     for (const move of state.moves) {
@@ -477,6 +643,7 @@ function applyOnlineRoomState(state: OnlineRoomState): void {
   claimedDraw = state.result?.reason === "claimed draw" ? "a draw claim" : null;
   onlineMessage = "";
   render();
+  if (gameJustFinished) void refreshGuestHistory();
 }
 
 function activateOnlineRoom(room: OnlineRoomState, color: PlayerColor, seatToken: string): boolean {
@@ -684,6 +851,7 @@ createRoomButton.addEventListener("click", async () => {
     const response = await emitOnlineEvent("room:create", {
       startingFen: createStartingFen(selectStartingPosition()),
       colorPreference: "random",
+      guestToken,
     });
     if (!response.room || !response.color || !response.seatToken) {
       throw new Error("The server returned an incomplete room response.");
@@ -709,7 +877,7 @@ joinRoomForm.addEventListener("submit", async (event) => {
   }
   joinRoomButton.disabled = true;
   try {
-    const response = await emitOnlineEvent("room:join", { code });
+    const response = await emitOnlineEvent("room:join", { code, guestToken });
     if (!response.room || !response.color || !response.seatToken) {
       throw new Error("The server returned an incomplete room response.");
     }
@@ -737,48 +905,43 @@ copyRoomLinkButton.addEventListener("click", async () => {
   render();
 });
 
+let profileConnectionAttempt = 0;
+
 if (onlineSocket) {
   onlineSocket.on("connect", () => {
+    profileConnectionAttempt += 1;
+    const attempt = profileConnectionAttempt;
     onlineConnectionState = "connected";
-    if (savedOnlineSession && gameMode !== "online") {
-      onlineRoomCode = savedOnlineSession.code;
-      onlineSeatToken = savedOnlineSession.seatToken;
-      gameMode = "online";
-    }
-    if (savedOnlineSession && onlineRoomCode === savedOnlineSession.code) {
+    void initializeGuestProfile().then(async () => {
+      if (attempt !== profileConnectionAttempt || !onlineSocket.connected) return;
+      if (!savedOnlineSession) return;
       onlineRoomCode = savedOnlineSession.code;
       onlineSeatToken = savedOnlineSession.seatToken;
       gameMode = "online";
       render();
-      emitOnlineEvent("room:rejoin", {
-        code: savedOnlineSession.code,
-        seatToken: savedOnlineSession.seatToken,
-      }).then((response) => {
+      try {
+        const response = await emitOnlineEvent("room:rejoin", {
+          code: savedOnlineSession.code,
+          seatToken: savedOnlineSession.seatToken,
+        });
         if (!response.room || !response.color) throw new Error("The server returned an incomplete reconnect response.");
         onlineColor = response.color === "white" ? "w" : "b";
         applyOnlineRoomState(response.room);
-      }).catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : "Could not reclaim the saved seat.";
-        clearOnlineSession();
-        gameMode = "local";
-        onlineRoomCode = null;
-        onlineSeatToken = null;
-        onlineColor = null;
-        onlineRoomStatus = null;
-        onlinePlayers = null;
-        onlineResult = null;
-        onlineMessage = message;
+      } catch (error) {
+        onlineMessage = error instanceof Error ? error.message : "Could not reclaim the saved seat.";
         render();
-      });
-    } else {
-      render();
-    }
+      }
+    });
   });
   onlineSocket.on("disconnect", () => {
+    profileConnectionAttempt += 1;
+    profileReady = false;
     onlineConnectionState = "disconnected";
     render();
   });
   onlineSocket.on("connect_error", () => {
+    profileConnectionAttempt += 1;
+    profileReady = false;
     onlineConnectionState = "disconnected";
     render();
   });

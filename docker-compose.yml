@@ -1,0 +1,60 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: frontend
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: backend
+    init: true
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "4173"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-chess18}:${POSTGRES_PASSWORD:-chess18_dev}@postgres:5432/${POSTGRES_DB:-chess18}
+    expose:
+      - "4173"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4173/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-chess18}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chess18_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-chess18}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - chess18-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  chess18-postgres-data:

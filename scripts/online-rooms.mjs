@@ -41,10 +41,14 @@ function serializeRoom(room) {
     moves: room.game.history({ verbose: true }).map(({ from, to, promotion }) => ({ from, to, promotion })),
     players: Object.fromEntries(["white", "black"]
       .filter((color) => room.players[color])
-      .map((color) => [color, { tokenHash: room.players[color].tokenHash }])),
+      .map((color) => [color, {
+        tokenHash: room.players[color].tokenHash,
+        userId: room.players[color].userId ?? null,
+      }])),
     result: room.result,
     drawOffer: room.drawOffer,
     createdAt: room.createdAt,
+    startedAt: room.startedAt,
     updatedAt: room.updatedAt,
   };
 }
@@ -71,7 +75,12 @@ function restoreRoom(data) {
   for (const color of ["white", "black"]) {
     const player = data.players[color];
     if (player && typeof player.tokenHash === "string" && /^[a-f0-9]{64}$/.test(player.tokenHash)) {
-      players[color] = { tokenHash: player.tokenHash, socketId: null, connected: false };
+      players[color] = {
+        tokenHash: player.tokenHash,
+        userId: typeof player.userId === "string" ? player.userId : null,
+        socketId: null,
+        connected: false,
+      };
     }
   }
 
@@ -85,6 +94,7 @@ function restoreRoom(data) {
     result: data.result ?? null,
     drawOffer: data.drawOffer ?? null,
     createdAt: Number(data.createdAt) || Date.now(),
+    startedAt: Number(data.startedAt) || null,
     updatedAt: Number(data.updatedAt) || Date.now(),
   };
 }
@@ -130,25 +140,40 @@ function publicRoom(room) {
   };
 }
 
-export async function attachOnlineRooms(io, dataDirectory) {
+export async function attachOnlineRooms(io, dataDirectory, database = null) {
   const filePath = path.join(dataDirectory, "rooms.json");
   const rooms = new Map();
   let writeQueue = Promise.resolve();
   let operationQueue = Promise.resolve();
 
-  try {
-    const contents = await readFile(filePath, "utf8");
-    const savedRooms = JSON.parse(contents);
-    if (!Array.isArray(savedRooms)) throw new Error("Online room data must be an array.");
+  if (database) {
+    const savedRooms = await database.loadRooms();
     for (const savedRoom of savedRooms) {
       const room = restoreRoom(savedRoom);
       if (room && !isExpired(room)) rooms.set(room.code, room);
+      else if (typeof savedRoom?.code === "string") await database.deleteRoom(savedRoom.code);
     }
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
+  } else {
+    try {
+      const contents = await readFile(filePath, "utf8");
+      const savedRooms = JSON.parse(contents);
+      if (!Array.isArray(savedRooms)) throw new Error("Online room data must be an array.");
+      for (const savedRoom of savedRooms) {
+        const room = restoreRoom(savedRoom);
+        if (room && !isExpired(room)) rooms.set(room.code, room);
+      }
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
   }
 
   async function persistRooms() {
+    if (database) {
+      for (const room of rooms.values()) {
+        await database.saveRoom(serializeRoom(room), getCompletedGame(room));
+      }
+      return;
+    }
     const write = writeQueue.then(async () => {
       await mkdir(dataDirectory, { recursive: true });
       const temporaryPath = `${filePath}.${process.pid}.tmp`;
@@ -161,7 +186,8 @@ export async function attachOnlineRooms(io, dataDirectory) {
 
   async function persistRoom(room, previousState) {
     try {
-      await persistRooms();
+      if (database) await database.saveRoom(serializeRoom(room), getCompletedGame(room));
+      else await persistRooms();
     } catch (error) {
       if (previousState) {
         const restored = restoreRoom(previousState);
@@ -187,6 +213,30 @@ export async function attachOnlineRooms(io, dataDirectory) {
     const result = operationQueue.then(operation);
     operationQueue = result.catch(() => {});
     return result;
+  }
+
+  function getCompletedGame(room) {
+    if (room.status !== "finished" || !room.players.white?.userId || !room.players.black?.userId
+      || room.players.white.userId === room.players.black.userId || !room.result) {
+      return null;
+    }
+    return {
+      roomCode: room.code,
+      mode: room.startingFen === "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        ? "classic"
+        : "chess18",
+      whiteUserId: room.players.white.userId,
+      blackUserId: room.players.black.userId,
+      result: room.result.winner ?? "draw",
+      reason: room.result.reason,
+      startingFen: room.startingFen,
+      finalFen: room.game.fen(),
+      pgn: room.game.pgn({ maxWidth: 0 }),
+      moves: room.game.history({ verbose: true }).map(({ from, to, promotion }) => ({ from, to, promotion })),
+      createdAt: room.createdAt,
+      startedAt: room.startedAt ?? room.createdAt,
+      finishedAt: room.updatedAt,
+    };
   }
 
   function isExpired(room) {
@@ -216,6 +266,14 @@ export async function attachOnlineRooms(io, dataDirectory) {
     return null;
   }
 
+  async function createUniqueRoomCode() {
+    let code = createRoomCode(rooms);
+    while (database && await database.roomCodeExists(code)) {
+      code = createRoomCode(rooms);
+    }
+    return code;
+  }
+
   function sendState(room) {
     io.to(room.code).emit("room:state", publicRoom(room));
   }
@@ -232,6 +290,28 @@ export async function attachOnlineRooms(io, dataDirectory) {
       });
     }
 
+    onRequest("profile:identify", async (payload, acknowledge) => {
+      if (!database) {
+        acknowledge({ ok: true, persistence: "file", guestToken: null, stats: null, games: [] });
+        return;
+      }
+      const profile = await database.identifyGuest(payload.guestToken);
+      acknowledge({ ok: true, persistence: "postgres", profile });
+    });
+
+    onRequest("profile:history", async (payload, acknowledge) => {
+      if (!database) {
+        acknowledge({ ok: true, persistence: "file", stats: null, games: [] });
+        return;
+      }
+      const profile = await database.getProfile(payload.guestToken);
+      if (!profile) {
+        acknowledge({ ok: false, error: "Guest profile could not be verified." });
+        return;
+      }
+      acknowledge({ ok: true, persistence: "postgres", stats: profile.stats, games: profile.games });
+    });
+
     onRequest("room:create", async (payload, acknowledge) => {
       if (!allowedStartingFens.has(payload.startingFen)) {
         acknowledge({ ok: false, error: "Choose a listed starting position." });
@@ -244,8 +324,13 @@ export async function attachOnlineRooms(io, dataDirectory) {
       const color = preference === "random"
         ? (randomBytes(1)[0] < 128 ? "white" : "black")
         : preference;
+      const userId = database ? await database.findGuestId(payload.guestToken) : null;
+      if (database && !userId) {
+        acknowledge({ ok: false, error: "Connect a guest profile before creating a room." });
+        return;
+      }
       const token = createToken();
-      const code = createRoomCode(rooms);
+      const code = await createUniqueRoomCode();
       const room = {
         code,
         status: "waiting",
@@ -255,9 +340,15 @@ export async function attachOnlineRooms(io, dataDirectory) {
         result: null,
         drawOffer: null,
         createdAt: Date.now(),
+        startedAt: null,
         updatedAt: Date.now(),
       };
-      room.players[color] = { tokenHash: hashToken(token), socketId: socket.id, connected: true };
+      room.players[color] = {
+        tokenHash: hashToken(token),
+        userId,
+        socketId: socket.id,
+        connected: true,
+      };
       rooms.set(code, room);
       await persistRoom(room, null);
       socket.join(code);
@@ -276,11 +367,26 @@ export async function attachOnlineRooms(io, dataDirectory) {
         return;
       }
 
+      const userId = database ? await database.findGuestId(payload.guestToken) : null;
+      if (database && !userId) {
+        acknowledge({ ok: false, error: "Connect a guest profile before joining a room." });
+        return;
+      }
+      if (userId && Object.values(room.players).some((player) => player?.userId === userId)) {
+        acknowledge({ ok: false, error: "A guest profile cannot occupy both seats." });
+        return;
+      }
       const previousState = serializeRoom(room);
       const color = room.players.white ? "black" : "white";
       const token = createToken();
-      room.players[color] = { tokenHash: hashToken(token), socketId: socket.id, connected: true };
+      room.players[color] = {
+        tokenHash: hashToken(token),
+        userId,
+        socketId: socket.id,
+        connected: true,
+      };
       room.status = "playing";
+      room.startedAt = Date.now();
       room.updatedAt = Date.now();
       await persistRoom(room, previousState);
       socket.join(room.code);
@@ -414,7 +520,14 @@ export async function attachOnlineRooms(io, dataDirectory) {
       const previousState = serializeRoom(room);
       if (room.status === "waiting") {
         rooms.delete(room.code);
-        await persistRoom(room, previousState);
+        try {
+          if (database) await database.deleteRoom(room.code);
+          else await persistRooms();
+        } catch (error) {
+          const restored = restoreRoom(previousState);
+          if (restored) rooms.set(room.code, restored);
+          throw error;
+        }
         io.to(room.code).emit("room:closed");
       } else if (room.status === "playing") {
         room.result = { winner: color === "white" ? "black" : "white", reason: "resignation" };

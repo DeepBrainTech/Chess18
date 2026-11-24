@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -5,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Server } from "socket.io";
 import { attachOnlineRooms } from "./online-rooms.mjs";
+import { GameDatabase } from "./database.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const rootDirectory = path.join(projectRoot, "dist");
@@ -46,7 +48,23 @@ const server = createServer(async (request, response) => {
 });
 
 const io = new Server(server, { maxHttpBufferSize: 64 * 1024 });
-await attachOnlineRooms(io, dataDirectory);
+const database = process.env.DATABASE_URL
+  ? new GameDatabase(process.env.DATABASE_URL)
+  : null;
+if (database) {
+  await database.initialize();
+} else {
+  console.warn("[db] DATABASE_URL is unset; online rooms use local JSON and game history is disabled.");
+}
+await attachOnlineRooms(io, dataDirectory, database);
+
+async function shutdown() {
+  await new Promise((resolve) => io.close(resolve));
+  if (database) await database.close();
+}
+
+process.once("SIGINT", () => void shutdown());
+process.once("SIGTERM", () => void shutdown());
 
 const startServer = (port) => {
   server.once("error", (error) => {
